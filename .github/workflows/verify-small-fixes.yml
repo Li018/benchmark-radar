@@ -1,30 +1,82 @@
-name: Small fixes source context
+name: Independent small-fix verification
 
 on:
   push:
     branches: [work/verify-small-fixes-20261105]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  source-context:
+  verify:
+    name: Issue ${{ matrix.issue }} - clean red-green and full CI
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - issue: '863'
+            branch: fix/today-partial-match-note-20261105
+          - issue: '987'
+            branch: fix/benchmark-sitemap-lastmod-20261105
+          - issue: '1077'
+            branch: fix/email-blog-heading-20261105
+    env:
+      ISSUE: ${{ matrix.issue }}
+      TARGET_BRANCH: ${{ matrix.branch }}
+      BASE_SHA: 1fdad99e6494897d719981e4f0326538053b1f36
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Archive reviewed source and tests
-        run: |
-          git archive --format=tar.gz -o source-context.tar.gz HEAD src tests site/assets pyproject.toml principle.md AGENTS.md CONTRIBUTING.md docs .github data/snapshots .gitmodules
-          python - <<'PY'
-          from pathlib import Path
-          source = Path('site/assets/app.js').read_text()
-          for name in ('librarySavedSlugs', 'setLibrarySaved'):
-              start = source.index('function ' + name + '(')
-              print(source[start:source.index('\n}\n', start) + 2])
-          PY
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          name: source-context
-          path: source-context.tar.gz
-          retention-days: 7
+          node-version: '22'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Prepare isolated candidate and environment
+        run: |
+          git fetch origin "$BASE_SHA" --depth=1
+          git worktree add --detach "$RUNNER_TEMP/candidate" "$BASE_SHA"
+          cd "$RUNNER_TEMP/candidate"
+          git submodule update --init --recursive
+          python -m venv .venv
+          .venv/bin/python -m pip install -e '.[dev]'
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Prove regression before and after and make the isolated commit
+        run: python .verification/prepare.py
+      - name: Install separately in a fresh verification worktree
+        run: |
+          cd "$CHECKED"
+          test -z "$(git status --porcelain)"
+          git submodule update --init --recursive
+          python -m venv .venv
+          .venv/bin/python -m pip install -e '.[dev]'
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Ruff check
+        run: cd "$CHECKED" && ruff check .
+      - name: Ruff format check
+        run: cd "$CHECKED" && ruff format --check .
+      - name: Normalize full catalog
+        run: cd "$CHECKED" && benchmark-radar normalize-catalog
+      - name: Classify full catalog
+        run: cd "$CHECKED" && benchmark-radar classify
+      - name: Build validated data release
+        run: cd "$CHECKED" && benchmark-radar build-data-release
+      - name: Complete test suite
+        run: |
+          cd "$CHECKED"
+          pytest -q 2>&1 | tee "$EVIDENCE/pytest-full.txt"
+      - name: Push only the verified topic branch
+        run: |
+          cd "$RUNNER_TEMP/candidate"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+          printf '%s\n' "$TARGET_BRANCH" > "$EVIDENCE/branch.txt"
+      - name: Keep verification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: verification-${{ matrix.issue }}
+          path: .verification/out/${{ matrix.issue }}/
+          retention-days: 14
