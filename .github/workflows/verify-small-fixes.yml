@@ -1,0 +1,34 @@
+name: Small fixes preflight
+
+on:
+  push:
+    branches: [work/verify-small-fixes-20261105]
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Install into an isolated environment
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e '.[dev]'
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: benchmark-radar normalize-catalog
+      - run: benchmark-radar classify
+      - run: benchmark-radar build-data-release
+      - run: pytest -q
