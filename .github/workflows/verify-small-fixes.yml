@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Archive reviewed source and tests
         run: |
-          git archive --format=tar.gz -o source-context.tar.gz 1fdad99e6494897d719981e4f0326538053b1f36 src tests site/assets pyproject.toml principle.md AGENTS.md CONTRIBUTING.md docs .github data/snapshots .gitmodules
+          git archive --format=tar.gz -o source-context.tar.gz HEAD src tests site/assets pyproject.toml principle.md AGENTS.md CONTRIBUTING.md docs .github data/snapshots .gitmodules
           python - <<'PY'
           from pathlib import Path
           source = Path('site/assets/app.js').read_text()
